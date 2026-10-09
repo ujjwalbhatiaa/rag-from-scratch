@@ -1,0 +1,16 @@
+Northwind Outfitters — Membership & Pricing
+
+Northwind Plus is our membership program at $9.99 per month or $99 per year.
+Members get free express shipping on every order, early access to seasonal
+sales, and 5% back in store credit on all purchases.
+
+Students with a valid university email get Northwind Plus at half price:
+$4.99 per month. The discount applies for up to four years and renews
+automatically each year you re-verify.
+
+You can cancel anytime from your account settings. If you cancel within the
+first 14 days, you get a full refund of the membership fee. After that,
+refunds are prorated to the unused full months.
+
+Store credit from the 5% member reward never expires and can be combined with
+sale prices and coupon codes at checkout.
