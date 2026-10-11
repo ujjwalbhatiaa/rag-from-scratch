@@ -14,7 +14,7 @@ import sys
 
 from .chunking import Chunk, split_documents
 from .retrieval import BM25
-from .rerank import rerank
+from .rerank import rerank, mmr_rerank
 from .generation import generate
 
 
@@ -47,7 +47,11 @@ def cmd_ask(args: argparse.Namespace) -> int:
     chunks = _load_index(args.index)
     bm25 = BM25(chunks)
     candidates = bm25.search(args.query, k=args.retrieve_k)
-    top = rerank(args.query, candidates, k=args.final_k)
+    if args.mmr:
+        top = mmr_rerank(args.query, candidates, k=args.final_k,
+                         lambda_=args.mmr_lambda)
+    else:
+        top = rerank(args.query, candidates, k=args.final_k)
     answer = generate(args.query, [c for c, _ in top],
                       api_key=args.api_key or os.environ.get("OPENAI_API_KEY"))
     print(answer)
@@ -75,6 +79,11 @@ def main(argv: list[str] | None = None) -> int:
     p_ask.add_argument("--final-k", type=int, default=3)
     p_ask.add_argument("--api-key", default=None)
     p_ask.add_argument("--show-sources", action="store_true")
+    p_ask.add_argument("--mmr", action="store_true",
+                       help="rerank with MMR (relevance + diversity) "
+                            "instead of BM25/bigram fusion")
+    p_ask.add_argument("--mmr-lambda", type=float, default=0.7,
+                       help="MMR relevance/diversity tradeoff in [0, 1]")
 
     args = parser.parse_args(argv)
     if args.command == "ingest":

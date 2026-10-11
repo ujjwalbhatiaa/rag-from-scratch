@@ -4,6 +4,8 @@ import json
 import os
 import tempfile
 
+import pytest
+
 from rag_from_scratch import (
     BM25,
     Chunk,
@@ -15,6 +17,7 @@ from rag_from_scratch import (
     mean_recall_at_k,
     recall_at_k,
     rerank,
+    mmr_rerank,
     split_documents,
     split_text,
 )
@@ -199,3 +202,57 @@ def test_cli_ingest_and_ask(tmp_path):
                        capture_output=True, text=True, cwd="/tmp/rag-from-scratch")
     assert r.returncode == 0, r.stderr
     assert "30 days" in r.stdout
+
+
+# --- MMR reranking ------------------------------------------------------------
+
+def _dup_chunks():
+    docs = {
+        "a.txt": "returns are accepted within 30 days of delivery for a full refund",
+        "b.txt": "returns are accepted within 30 days of delivery for a full refund today",
+        "c.txt": "standard shipping takes three to five business days and costs extra",
+    }
+    return split_documents(docs, chunk_size=500, chunk_overlap=0)
+
+
+def test_mmr_empty_and_k_edge_cases():
+    assert mmr_rerank("q", [], k=3) == []
+    chunks = _dup_chunks()
+    scored = [(chunks[0], 1.0)]
+    assert mmr_rerank("q", scored, k=0) == []
+    assert len(mmr_rerank("q", scored, k=5)) == 1  # k capped at candidates
+
+
+def test_mmr_lambda_out_of_range():
+    chunks = _dup_chunks()
+    scored = [(chunks[0], 1.0)]
+    with pytest.raises(ValueError):
+        mmr_rerank("q", scored, lambda_=1.5)
+    with pytest.raises(ValueError):
+        mmr_rerank("q", scored, lambda_=-0.1)
+
+
+def test_mmr_pure_relevance_keeps_ranking_order():
+    chunks = _dup_chunks()
+    scored = [(chunks[0], 1.0), (chunks[1], 0.9), (chunks[2], 0.5)]
+    top = mmr_rerank("returns", scored, k=2, lambda_=1.0)
+    assert [c.source for c, _ in top] == ["a.txt", "b.txt"]
+
+
+def test_mmr_demotes_near_duplicates():
+    chunks = _dup_chunks()
+    scored = [(chunks[0], 1.0), (chunks[1], 0.9), (chunks[2], 0.5)]
+    top = mmr_rerank("returns", scored, k=2, lambda_=0.0)
+    # pure diversity: after the most relevant chunk, the diverse shipping
+    # chunk beats the near-duplicate returns chunk
+    assert [c.source for c, _ in top] == ["a.txt", "c.txt"]
+
+
+def test_mmr_balanced_tradeoff():
+    chunks = _dup_chunks()
+    scored = [(chunks[0], 1.0), (chunks[1], 0.9), (chunks[2], 0.5)]
+    top = mmr_rerank("returns", scored, k=3, lambda_=0.7)
+    assert [c.source for c, _ in top][0] == "a.txt"  # best stays first
+    assert len(top) == 3
+    scores = [s for _, s in top]
+    assert all(isinstance(s, float) for s in scores)
