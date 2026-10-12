@@ -27,6 +27,11 @@ python -m rag_from_scratch ask "What is the refund policy?" --index index.json
 # 3. With an OpenAI-compatible API key for generated answers
 python -m rag_from_scratch ask "How much is express shipping?" \
     --index index.json --api-key $OPENAI_API_KEY --show-sources
+
+# 4. Score retrieval + reranking on a labeled eval set (JSONL:
+#    one {"query": ..., "relevant_sources": [...]} per line)
+python -m rag_from_scratch eval --index index.json --evalset eval.jsonl \
+    --threshold 0.8
 ```
 
 Or use it as a library:
@@ -60,6 +65,10 @@ print(generate("how do returns work?", [c for c, _ in top],
   API key, it degrades honestly to an extractive answer (top chunks verbatim).
 - **Evaluation**: `recall_at_k` over labeled query→doc pairs, plus
   `citation_coverage` — the fraction of provided chunks the answer cites.
+  The `eval` CLI command runs a labeled JSONL set through the same
+  retrieval+rerank path as `ask` and reports per-query and mean recall@k
+  and MRR (mean reciprocal rank), exiting nonzero when mean recall@k falls
+  below `--threshold`.
 
 ## Tests
 
@@ -67,7 +76,9 @@ print(generate("how do returns work?", [c for c, _ in top],
 pytest
 ```
 
-27 tests: chunking (sizes, overlap, empty input), BM25 ranking and edge
+31 tests: chunking (sizes, overlap, empty input), BM25 ranking and edge
 cases, reranking (fusion + MMR: near-duplicate demotion, pure-relevance
-order, lambda bounds, edge cases), prompt construction, evaluation metrics,
-an end-to-end recall check on the sample docs, and CLI ingest→ask round-trips.
+order, lambda bounds, edge cases), prompt construction, evaluation metrics
+(recall@k, reciprocal rank/MRR, citation coverage), an end-to-end recall
+check on the sample docs, CLI ingest→ask round-trips, and CLI `eval`
+round-trips (labeled JSONL scoring, `--threshold` failure).

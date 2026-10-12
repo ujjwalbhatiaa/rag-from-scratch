@@ -2,6 +2,8 @@
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -15,7 +17,9 @@ from rag_from_scratch import (
     extractive_answer,
     generate,
     mean_recall_at_k,
+    mean_reciprocal_rank,
     recall_at_k,
+    reciprocal_rank,
     rerank,
     mmr_rerank,
     split_documents,
@@ -256,3 +260,76 @@ def test_mmr_balanced_tradeoff():
     assert len(top) == 3
     scores = [s for _, s in top]
     assert all(isinstance(s, float) for s in scores)
+
+
+# --- reciprocal rank ------------------------------------------------------------
+
+def test_reciprocal_rank():
+    assert reciprocal_rank(["a", "b", "c"], {"c"}) == pytest.approx(1 / 3)
+    assert reciprocal_rank(["a", "b"], {"a"}) == 1.0
+    assert reciprocal_rank(["b", "a"], {"a"}) == pytest.approx(0.5)
+    assert reciprocal_rank(["a"], {"zzz"}) == 0.0
+    assert reciprocal_rank([], {"a"}) == 0.0
+    assert reciprocal_rank(["a"], set()) == 1.0  # nothing relevant -> vacuous
+
+
+def test_mean_reciprocal_rank():
+    results = [
+        (["a", "b"], {"a"}),          # 1.0
+        (["a", "b", "c"], {"c"}),     # 1/3
+        (["x", "y"], {"zzz"}),        # 0.0
+    ]
+    assert mean_reciprocal_rank(results) == pytest.approx((1 + 1 / 3 + 0) / 3)
+    assert mean_reciprocal_rank([]) == 0.0
+
+
+def test_cli_eval_round_trip(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "returns.txt").write_text(
+        "Refunds are issued within 30 days of purchase for unused items.")
+    (docs / "shipping.txt").write_text(
+        "Standard shipping takes five business days and costs extra.")
+    evalset = tmp_path / "eval.jsonl"
+    evalset.write_text(
+        json.dumps({"query": "refund policy",
+                    "relevant_sources": ["returns.txt"]}) + "\n"
+        + json.dumps({"query": "shipping time",
+                      "relevant_sources": ["shipping.txt"]}) + "\n")
+    idx = tmp_path / "index.json"
+    r = subprocess.run([sys.executable, "-m", "rag_from_scratch", "ingest",
+                        str(docs), "--index", str(idx)],
+                       capture_output=True, text=True,
+                       cwd="/tmp/rag-from-scratch")
+    assert r.returncode == 0, r.stderr
+    r = subprocess.run([sys.executable, "-m", "rag_from_scratch", "eval",
+                        "--index", str(idx), "--evalset", str(evalset)],
+                       capture_output=True, text=True,
+                       cwd="/tmp/rag-from-scratch")
+    assert r.returncode == 0, r.stderr
+    assert "eval: 2 queries" in r.stdout
+    assert "mean recall@3=" in r.stdout and "MRR=" in r.stdout
+
+
+def test_cli_eval_threshold_fails(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "returns.txt").write_text(
+        "Refunds are issued within 30 days of purchase for unused items.")
+    evalset = tmp_path / "eval.jsonl"
+    evalset.write_text(
+        json.dumps({"query": "completely unrelated blorp",
+                    "relevant_sources": ["returns.txt"]}) + "\n")
+    idx = tmp_path / "index.json"
+    r = subprocess.run([sys.executable, "-m", "rag_from_scratch", "ingest",
+                        str(docs), "--index", str(idx)],
+                       capture_output=True, text=True,
+                       cwd="/tmp/rag-from-scratch")
+    assert r.returncode == 0, r.stderr
+    r = subprocess.run([sys.executable, "-m", "rag_from_scratch", "eval",
+                        "--index", str(idx), "--evalset", str(evalset),
+                        "--threshold", "0.5"],
+                       capture_output=True, text=True,
+                       cwd="/tmp/rag-from-scratch")
+    assert r.returncode == 1  # mean recall@3 below the bar
+    assert "below threshold" in r.stderr
